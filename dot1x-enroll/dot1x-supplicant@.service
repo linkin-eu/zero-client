@@ -1,0 +1,8 @@
+[Unit]
+Description=802.1X EAP-TLS supplicant on %I, started and stopped by dot1x-enroll
+BindsTo=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/wpa_supplicant -c /var/lib/dot1x-enroll/wpa_supplicant.conf -Dwired -i%I

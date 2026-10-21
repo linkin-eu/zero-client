@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# NetworkManager dispatcher: opens the captive portal browser for the desktop user when NetworkManager detects a portal,
+# and once the network is fully open closes it and runs the Ansible units that failed while the device was still behind the portal.
+
+DESKTOP_USER=zero
+BROWSER_UNIT=captive-portal-browser
+
+case "$2" in
+  up|dhcp4-change)
+    # The switch moves the port to the working VLAN without a link change, so NetworkManager would keep reporting
+    # the portal until its next periodic check; checking now closes the portal window as soon as the address changes
+    nmcli networking connectivity check >/dev/null 2>&1
+    ;;
+  connectivity-change)
+    case "$CONNECTIVITY_STATE" in
+      PORTAL)
+        systemctl --user --machine="$DESKTOP_USER@" is-active --quiet "$BROWSER_UNIT" && exit 0
+        systemd-run --user --machine="$DESKTOP_USER@" --unit="$BROWSER_UNIT" --collect /usr/local/bin/captive-portal-browser.sh
+        ;;
+      FULL)
+        systemctl --user --machine="$DESKTOP_USER@" stop "$BROWSER_UNIT" 2>/dev/null
+        # These only run on the working network, so at boot behind the portal they fail once and are started here
+        for ansible_unit in ansible-first-boot.service ansible-boot.service; do
+          if systemctl is-enabled --quiet "$ansible_unit" && systemctl is-failed --quiet "$ansible_unit"; then
+            systemctl start --no-block "$ansible_unit"
+          fi
+        done
+        ;;
+    esac
+    ;;
+esac
+exit 0

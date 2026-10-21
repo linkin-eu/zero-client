@@ -1,0 +1,12 @@
+[Unit]
+Description=Enroll a certificate over SCEP, authenticate the wired port with 802.1X EAP-TLS and keep it healthy
+After=systemd-networkd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dot1x-enroll-monitor.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+# Hands Ethernet to NetworkManager so GNOME detects the PacketFence captive portal and opens the sign-in window.
+# Overrides the networkd renderer of the Ansible-managed 01-dhcp.yaml, which Ansible rewrites but never removes this file.
+network:
+  version: 2
+  renderer: NetworkManager

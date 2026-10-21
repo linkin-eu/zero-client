@@ -70,6 +70,18 @@ This will:
 - Run Ansible playbook for system configuration
 - Takes ~20-30 minutes depending on internet speed
 
+To build an image that authenticates the wired port with 802.1X (see [802.1X EAP-TLS Enrollment](#8021x-eap-tls-enrollment)), pass the plant:
+
+```bash
+sudo ./create-image.sh 2001
+```
+
+After the first boot the device pulls `ansible/zero.yml` from the `v4` branch. A test image can follow another branch, kept in `/etc/default/zero-client` on the device:
+
+```bash
+sudo PLAYBOOK_BRANCH=feature/my-change ./create-image.sh 2001
+```
+
 ### 2. Burn to USB Drive
 
 **Single USB:**
@@ -109,6 +121,7 @@ zero-client/
 ├── image-creation/
 │   ├── create-image.sh       # Main image creation script
 │   ├── modify-chroot.sh      # Chroot configuration script
+│   ├── prepare-dot1x-enroll.sh # Fetch 802.1X enrollment settings from SSM
 │   ├── requirements.sh       # Install build dependencies
 │   ├── burn-to-usb.sh        # Single USB burning
 │   └── burn-to-multi-usb.sh  # Parallel multi-USB burning
@@ -117,6 +130,7 @@ zero-client/
     ├── ansible-boot.service        # Every boot Ansible run
     ├── ansible-cron.service        # Hourly Ansible run
     └── ansible-cron.timer          # Timer for periodic updates
+└── dot1x-enroll/                   # SCEP enrollment and wired 802.1X EAP-TLS (installed with a plant)
 ```
 
 ### Boot Process
@@ -182,6 +196,25 @@ Ansible execution logs:
 - `/home/zero/.config/linkin/ansible-first-boot.log`
 - `/home/zero/.config/linkin/ansible-boot.log`
 - `/home/zero/.config/linkin/ansible-cron.log`
+
+## 802.1X EAP-TLS Enrollment
+
+Images built with a plant (`sudo ./create-image.sh <plant>`) authenticate the wired port with a certificate, like the Yocto RPi devices do on Wi-Fi:
+
+1. Boot on the PacketFence onboarding VLAN (MAC authentication fallback on the switch port)
+2. Request a certificate over SCEP from PacketFence (CN `zero-<plant>-<ethernet mac>`, CA pinned by fingerprint)
+3. Start 802.1X EAP-TLS on the port and renew DHCP; fall back to the onboarding VLAN when it is not authorized, re-enroll when the certificate is invalid, refused or revoked (OCSP)
+
+Build-time settings come from the Yocto RPi SSM parameter `/yocto/<plant>/scep` (`eu-central-1`), read with the AWS credentials of the user running `sudo`.
+It must hold `KEY="value"` lines for `SCEP_HOST`, `SCEP_CHALLENGE`, `CA_FINGERPRINT`, `RADIUS_DOMAIN`, `OCSP_HOST`.
+The PacketFence PKI template is not taken from SSM: thin clients use their own, set by `SCEP_TEMPLATE` in `image-creation/prepare-dot1x-enroll.sh`.
+
+On the device:
+- Settings: `/etc/dot1x-enroll.conf` (root only); certificate, key and EAP config: `/var/lib/dot1x-enroll/`
+- Logs: `journalctl -u dot1x-enroll -u 'dot1x-supplicant@*'`
+- Reset: `sudo rm -rf /var/lib/dot1x-enroll && sudo reboot`
+
+The SCEP challenge is shared by all devices of a plant and the disk is not encrypted, so anyone holding a USB stick can enroll a certificate; restrict the thin client PacketFence role accordingly.
 
 ## USB Optimization Details
 

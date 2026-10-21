@@ -5,20 +5,48 @@ set -x
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 ANSIBLE_DIR="$SCRIPT_DIR/../ansible"
 SERVICES_DIR="$SCRIPT_DIR/../services"
+DOT1X_ENROLL_DIR="$SCRIPT_DIR/../dot1x-enroll"
 ROOT_MOUNT_PATH="/mnt/zero-img"
 IMAGE="zero-client.img"
+# Optional: with a plant the image enrolls a certificate over SCEP and authenticates the wired port with 802.1X
+PLANT="${1:-}"
+# The branch the device pulls ansible/zero.yml from after the first boot; test images can follow a feature branch
+PLAYBOOK_BRANCH="${PLAYBOOK_BRANCH:-v4}"
 
 cleanup() {
-  set +e
+  # No tracing here: the loop below visits every process on the host
+  set +ex
   sync
 
-  umount -R "$ROOT_MOUNT_PATH" 2>/dev/null || true
+  # Daemons started inside the chroot (gpg-agent, dirmngr) keep the image busy, so they are stopped first;
+  # only processes whose root is the image are touched
+  for process_root in /proc/[0-9]*/root; do
+    if [ "$(readlink "$process_root" 2>/dev/null)" = "$ROOT_MOUNT_PATH" ]; then
+      kill "$(basename "$(dirname "$process_root")")" 2>/dev/null
+    fi
+  done
+  sleep 1
 
+  umount -R "$ROOT_MOUNT_PATH" 2>/dev/null || umount -R -l "$ROOT_MOUNT_PATH" 2>/dev/null || true
+
+  # After a lazy unmount the loop device stays busy for a moment
   if [ -n "${LOOP_DEVICE:-}" ]; then
-    losetup -d "$LOOP_DEVICE" 2>/dev/null || true
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+      losetup -d "$LOOP_DEVICE" 2>/dev/null && break
+      sleep 1
+    done
+  fi
+
+  if [ -n "${DOT1X_SECRETS_DIR:-}" ]; then
+    rm -rf "$DOT1X_SECRETS_DIR"
   fi
 }
 trap cleanup EXIT INT TERM
+
+if [ -n "$PLANT" ]; then
+  DOT1X_SECRETS_DIR="$(mktemp -d)"
+  "$SCRIPT_DIR/prepare-dot1x-enroll.sh" "$PLANT" "$DOT1X_SECRETS_DIR"
+fi
 
 # Create image
 dd if=/dev/zero of="$IMAGE" bs=1G count=10
@@ -80,11 +108,32 @@ mount --rbind /sys "$ROOT_MOUNT_PATH/sys"
 mount --rbind /dev "$ROOT_MOUNT_PATH/dev"
 mount --bind /run "$ROOT_MOUNT_PATH/run"
 mount --bind /dev/pts "$ROOT_MOUNT_PATH/dev/pts"
+# One-way propagation: the bind mounts follow the host, but unmounting them never unmounts the host's /sys or /dev
+mount --make-rslave "$ROOT_MOUNT_PATH"
 
 # Services and playbook
 cp "$SERVICES_DIR/"*.service "$ROOT_MOUNT_PATH/etc/systemd/system/" 2>/dev/null || true
 cp "$SERVICES_DIR/"*.timer   "$ROOT_MOUNT_PATH/etc/systemd/system/" 2>/dev/null || true
 cp "$ANSIBLE_DIR/zero.yml" "$ROOT_MOUNT_PATH/root/zero.yml"
+echo "PLAYBOOK_BRANCH=$PLAYBOOK_BRANCH" > "$ROOT_MOUNT_PATH/etc/default/zero-client"
+
+# 802.1X enrollment; modify-chroot.sh installs its packages and enables it when /etc/dot1x-enroll.conf exists
+if [ -n "$PLANT" ]; then
+  install -m 0600 "$DOT1X_SECRETS_DIR/dot1x-enroll.conf" "$ROOT_MOUNT_PATH/etc/dot1x-enroll.conf"
+  install -m 0755 "$DOT1X_SECRETS_DIR/scepclient" "$ROOT_MOUNT_PATH/usr/local/bin/scepclient"
+  install -m 0755 "$DOT1X_ENROLL_DIR/dot1x-enroll.sh" "$DOT1X_ENROLL_DIR/dot1x-enroll-monitor.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
+  install -m 0644 "$DOT1X_ENROLL_DIR/dot1x-enroll.service" "$DOT1X_ENROLL_DIR/dot1x-supplicant@.service" "$ROOT_MOUNT_PATH/etc/systemd/system/"
+  install -D -m 0600 "$DOT1X_ENROLL_DIR/90-networkmanager.yaml" "$ROOT_MOUNT_PATH/etc/netplan/90-networkmanager.yaml"
+  # An empty file here overrides the packaged one that leaves Ethernet unmanaged outside Ubuntu Desktop
+  install -D -m 0644 /dev/null "$ROOT_MOUNT_PATH/etc/NetworkManager/conf.d/10-globally-managed-devices.conf"
+  install -D -m 0644 "$DOT1X_ENROLL_DIR/90-connectivity-interval.conf" "$ROOT_MOUNT_PATH/etc/NetworkManager/conf.d/90-connectivity-interval.conf"
+  # Google Chrome on the captive portal instead of GNOME's portal helper
+  install -m 0755 "$DOT1X_ENROLL_DIR/captive-portal-browser.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
+  install -D -m 0755 "$DOT1X_ENROLL_DIR/90-captive-portal" "$ROOT_MOUNT_PATH/etc/NetworkManager/dispatcher.d/90-captive-portal"
+  install -D -m 0644 "$DOT1X_ENROLL_DIR/captive-portal-browser.desktop" "$ROOT_MOUNT_PATH/etc/xdg/autostart/captive-portal-browser.desktop"
+  # No reporting, sign-in, prompts or DNS-over-HTTPS: on the registration VLAN they only add requests to the portal
+  install -D -m 0644 "$DOT1X_ENROLL_DIR/chrome-policies.json" "$ROOT_MOUNT_PATH/etc/opt/chrome/policies/managed/zero-client.json"
+fi
 
 # fstab (USB read-mostly)
 cat >"$ROOT_MOUNT_PATH/etc/fstab" <<'EOF'

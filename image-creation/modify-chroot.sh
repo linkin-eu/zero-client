@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euox pipefail
 
+# Package prompts (console-setup, keyboard) would stop the unattended build; take their defaults
+export DEBIAN_FRONTEND=noninteractive
+
+# APT SOURCES: debootstrap only adds the release pocket, so without updates and security every package stays at release day
+cat >/etc/apt/sources.list <<EOF
+deb http://archive.ubuntu.com/ubuntu noble main universe
+deb http://archive.ubuntu.com/ubuntu noble-updates main universe
+deb http://security.ubuntu.com/ubuntu noble-security main universe
+EOF
+apt update
+apt upgrade -y
+
 # INSTALL PACKAGES
 apt install -y linux-image-generic software-properties-common
 add-apt-repository -y universe
@@ -63,9 +75,22 @@ cat /boot/efi/loader/entries/ubuntu.conf
 # ENABLE SERVICES
 systemctl enable ansible-first-boot.service || true
 
+# 802.1X ENROLLMENT (only in images built for a plant)
+if [ -f /etc/dot1x-enroll.conf ]; then
+  apt install -y wpasupplicant openssl wget network-manager network-manager-config-connectivity-ubuntu
+  systemctl enable dot1x-enroll.service
+  # NetworkManager owns Ethernet (90-networkmanager.yaml); networkd would wait for links it no longer manages
+  systemctl disable systemd-networkd-wait-online.service || true
+  systemctl enable NetworkManager.service NetworkManager-wait-online.service
+fi
+
 # SET TIMEZONE
 ln -sf /usr/share/zoneinfo/Europe/Sofia /etc/localtime
 echo "Europe/Sofia" > /etc/timezone
+
+# SET HOSTNAME: debootstrap copies the build host's name; Ansible sets the same name at runtime
+echo "LINKIN-ZERO-4" > /etc/hostname
+echo "127.0.1.1 LINKIN-ZERO-4" >> /etc/hosts
 
 # CREATE DEFAULT USER
 useradd -m -c "Linkin Zero Client" -d /home/zero -s /bin/bash zero
