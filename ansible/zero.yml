@@ -14,7 +14,7 @@
       - /usr/share/applications/gnome-session-properties.desktop
       - /usr/share/applications/com.gexperts.Tilix.desktop
       - /usr/share/applications/nm-connection-editor.desktop
-      - /var/lib/snapd/desktop/applications/firefox_firefox.desktop
+    chrome_key_fingerprint: "EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796"
 
   handlers:
     - name: Reload systemd and restart getty@tty1
@@ -45,20 +45,6 @@
         repo: "deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} universe"
         state: present
         update_cache: yes
-
-    - name: Ensure snapd is installed
-      ansible.builtin.apt:
-        name: snapd
-        state: latest
-      when: lookup('env', 'ZEROSTATE') != 'CHROOT'
-
-    - name: Refresh snapd through snap
-      ansible.builtin.snap:
-        name:
-          - snapd
-          - core
-        state: present
-      when: lookup('env', 'ZEROSTATE') != 'CHROOT'
 
     - name: Update apt cache
       ansible.builtin.apt:
@@ -197,11 +183,120 @@
     - name: Install GUI Applications
       ansible.builtin.apt:
         name:
-          - firefox # Cannot install snaps in chroot
-          - gnome-terminal # Cannot install snaps in chroot
-          - gnome-system-monitor # Cannot install snaps in chroot
+          - gnome-terminal
+          - gnome-system-monitor
         state: latest
       when: lookup('env', 'ZEROSTATE') != 'CHROOT'
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # GOOGLE CHROME (the only browser: captive portal sign-in and links from the remote desktop clients)
+    # ------------------------------------------------------------------------------------------------------------------
+    # The Chrome package installs and maintains its own repository (google-chrome.sources); the verified repository below only
+    # bootstraps the first install and is removed afterwards, so the same packages never come from two sources
+    - name: Check whether Chrome already manages its repository
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/google-chrome.sources
+      register: chrome_sources
+
+    - name: Install gnupg to verify the Google signing key
+      ansible.builtin.apt:
+        name: gnupg
+        state: present
+      when: not chrome_sources.stat.exists
+
+    - name: Ensure the APT keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      when: not chrome_sources.stat.exists
+
+    - name: Download the Google Linux package signing key
+      ansible.builtin.get_url:
+        url: https://dl.google.com/linux/linux_signing_key.pub
+        dest: /etc/apt/keyrings/google-chrome.asc
+        mode: "0644"
+      when: not chrome_sources.stat.exists
+
+    - name: Verify the Google signing key fingerprint
+      ansible.builtin.shell: >
+        gpg -n -q --import --import-options import-show /etc/apt/keyrings/google-chrome.asc 2>/dev/null
+        | grep -q {{ chrome_key_fingerprint }}
+      changed_when: false
+      when: not chrome_sources.stat.exists
+
+    - name: Add the Google Chrome APT repository for the first install
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main"
+        filename: google-chrome
+        state: present
+        update_cache: yes
+      when: not chrome_sources.stat.exists
+
+    - name: Install Google Chrome
+      ansible.builtin.apt:
+        name: google-chrome-stable
+        state: latest
+
+    - name: Remove the bootstrap repository now that Chrome maintains its own
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/google-chrome.list
+        state: absent
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # NO SNAPS: nothing uses them since Chrome replaced the Firefox snap; snapd only loads the USB stick at every boot
+    # ------------------------------------------------------------------------------------------------------------------
+    - name: Remove snapd and all snaps
+      ansible.builtin.apt:
+        name: snapd
+        state: absent
+        purge: yes
+
+    - name: Keep snapd from being installed again as a dependency
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/no-snapd
+        content: |
+          Package: snapd
+          Pin: release *
+          Pin-Priority: -10
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Ensure the local applications directory exists
+      ansible.builtin.file:
+        path: /usr/local/share/applications
+        state: directory
+        mode: "0755"
+
+    # An override in /usr/local wins over the package's launcher and survives Chrome updates
+    - name: Hide Google Chrome from the app grid
+      ansible.builtin.shell: >
+        sed '/^\[Desktop Entry\]/a NoDisplay=true' /usr/share/applications/{{ item }} > /usr/local/share/applications/{{ item }}
+      args:
+        creates: "/usr/local/share/applications/{{ item }}"
+      loop:
+        - google-chrome.desktop
+        - com.google.Chrome.desktop
+
+    - name: Ensure the zero user config directory exists
+      ansible.builtin.file:
+        path: /home/zero/.config
+        state: directory
+        owner: zero
+        group: zero
+
+    - name: Make Google Chrome the default browser for the zero user
+      ansible.builtin.copy:
+        dest: /home/zero/.config/mimeapps.list
+        content: |
+          [Default Applications]
+          x-scheme-handler/http=google-chrome.desktop
+          x-scheme-handler/https=google-chrome.desktop
+          text/html=google-chrome.desktop
+        owner: zero
+        group: zero
+        mode: "0644"
 
     - name: Configure GDM for auto-login
       ansible.builtin.copy:
@@ -276,7 +371,7 @@
         group: zero
         mode: "0644"
 
-    # HIDE APPS
+    # HIDE APPS: only the ones installed on this device, so a missing app never fails the whole run
     - name: Copy .desktop files to ~/.local/share/applications
       ansible.builtin.copy:
         src: "{{ item }}"
@@ -286,7 +381,7 @@
         group: zero
         mode: "0644"
       loop: "{{ hide_apps }}"
-      when: lookup('env', 'ZEROSTATE') != 'CHROOT'
+      when: lookup('env', 'ZEROSTATE') != 'CHROOT' and item is file
 
     - name: Ensure NoDisplay=true is set in .desktop files
       ansible.builtin.lineinfile:
@@ -295,7 +390,7 @@
         line: "NoDisplay=true"
         create: no
       loop: "{{ hide_apps }}"
-      when: lookup('env', 'ZEROSTATE') != 'CHROOT'
+      when: lookup('env', 'ZEROSTATE') != 'CHROOT' and item is file
 
     # ALLOW UNLOCK SCREEN
     - name: Add nopasswdlogin rule to gdm-password
@@ -339,7 +434,8 @@
 
     - name: Convert GPG key to binary format and install
       ansible.builtin.command:
-        cmd: gpg --dearmor -o /usr/share/keyrings/amazon-workspaces-clients.gpg /tmp/amazon-workspaces-clients.asc
+        # --batch --yes: overwrite the existing keyring without prompting, since there is no terminal under systemd
+        cmd: gpg --batch --yes --dearmor -o /usr/share/keyrings/amazon-workspaces-clients.gpg /tmp/amazon-workspaces-clients.asc
       when: aws_key_download.changed or not keyring_stat_before.stat.exists
 
     - name: Set correct permissions on GPG keyring
