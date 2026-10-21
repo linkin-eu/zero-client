@@ -3,21 +3,22 @@
 
 echo "Cleaning up zero-client build artifacts..."
 
-# Unmount all /mnt/zero-img mounts recursively
-if mountpoint -q /mnt/zero-img 2>/dev/null; then
+# Unmount every stacked /mnt/zero-img mount. Each one is made one-way first, so unmounting its
+# /sys and /dev bind mounts never unmounts the host's own.
+while mountpoint -q /mnt/zero-img 2>/dev/null; do
     echo "Unmounting /mnt/zero-img..."
-    umount -R /mnt/zero-img 2>/dev/null || true
-    umount -l /mnt/zero-img 2>/dev/null || true  # Force lazy unmount if needed
-fi
+    mount --make-rslave /mnt/zero-img 2>/dev/null || true
+    umount -R /mnt/zero-img 2>/dev/null || umount -R -l /mnt/zero-img || break
+done
 
-# Detach all loop devices
-echo "Detaching loop devices..."
-losetup -D 2>/dev/null || true
+# Detach only the loop devices backed by the build image, not the host's own (snaps)
+echo "Detaching zero-client loop devices..."
+losetup -l -n -O NAME,BACK-FILE | awk '/zero-client\.img/ {print $1}' | xargs -r -n1 losetup -d 2>/dev/null || true
 
-# Remove mount directory
+# Remove the mount directory only when empty: never rm -rf a path that may still hold the host's /dev or /sys
 if [ -d /mnt/zero-img ]; then
     echo "Removing mount directory..."
-    rmdir /mnt/zero-img 2>/dev/null || rm -rf /mnt/zero-img
+    rmdir /mnt/zero-img 2>/dev/null || echo "WARNING: /mnt/zero-img is not empty, left in place"
 fi
 
 # Remove image file
