@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Opens Google Chrome on the captive portal for the desktop user, in place of GNOME's portal helper, which Ubuntu no longer ships.
-# Runs as the desktop user: started by dot1x-enroll once the port is authorized, and by the NetworkManager dispatcher and autostart.
+# Runs as the desktop user, started only by dot1x-enroll once the port is authorized and NetworkManager detects the portal.
 
 # Any plain HTTP URL works: PacketFence redirects it to the portal
 PORTAL_PROBE_URL="http://connectivity-check.ubuntu.com/"
@@ -14,6 +14,9 @@ PROFILE_DIR="$XDG_RUNTIME_DIR/captive-portal-profile"
 mkdir -p "$PROFILE_DIR"
 
 # Kiosk: full screen with no tabs, address bar or menus, so the window is only the portal; it closes once the network is open.
-# The basic password store avoids a keyring unlock prompt, since the auto-login session has no keyring password.
-exec google-chrome-stable --kiosk --no-first-run --no-default-browser-check --password-store=basic \
+# The basic password store keeps Chrome away from the GNOME keyring, so no keyring prompt can cover the portal
+# on devices that have no password-less login keyring yet.
+# Incognito keeps the Google session only until the window closes, so the next sign-in asks for an account again
+# instead of registering the device under the previous user.
+exec google-chrome-stable --kiosk --incognito --no-first-run --no-default-browser-check --password-store=basic \
   --user-data-dir="$PROFILE_DIR" "$PORTAL_PROBE_URL"

@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Captive Portal Browser
-Comment=Opens the network sign-in page when the portal was detected before login
-Exec=systemd-run --user --unit=captive-portal-browser --collect /usr/local/bin/captive-portal-browser.sh
-NoDisplay=true
-X-GNOME-Autostart-enabled=true

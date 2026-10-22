@@ -77,7 +77,7 @@ systemctl enable ansible-first-boot.service || true
 
 # 802.1X ENROLLMENT (only in images built for a plant)
 if [ -f /etc/dot1x-enroll.conf ]; then
-  apt install -y wpasupplicant openssl wget network-manager network-manager-config-connectivity-ubuntu
+  apt install -y wpasupplicant openssl wget iputils-arping network-manager network-manager-config-connectivity-ubuntu
   systemctl enable dot1x-enroll.service
   # NetworkManager owns Ethernet (90-networkmanager.yaml); networkd would wait for links it no longer manages
   systemctl disable systemd-networkd-wait-online.service || true

@@ -104,7 +104,8 @@
                 dhcp-identifier: mac
         owner: root
         group: root
-        mode: "0644"
+        # netplan warns on every run about a configuration readable by others
+        mode: "0600"
         force: yes
       notify: Apply netplan configuration
 
@@ -297,6 +298,44 @@
         owner: zero
         group: zero
         mode: "0644"
+
+    # Auto-login has no password to unlock a keyring, so Chrome and Parsec would ask to create one. A keyring with an
+    # empty password opens without a prompt; its secrets are stored unencrypted, like the rest of the stick.
+    - name: Ensure the zero user keyring directory exists
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: zero
+        group: zero
+        mode: "0700"
+      loop:
+        - /home/zero/.local
+        - /home/zero/.local/share
+        - /home/zero/.local/share/keyrings
+
+    - name: Create a login keyring with an empty password for the zero user
+      ansible.builtin.copy:
+        dest: /home/zero/.local/share/keyrings/login.keyring
+        content: |
+          [keyring]
+          display-name=login
+          ctime=0
+          mtime=0
+          lock-on-idle=false
+          lock-after=false
+        owner: zero
+        group: zero
+        mode: "0600"
+        force: false
+
+    - name: Make the login keyring the default one
+      ansible.builtin.copy:
+        dest: /home/zero/.local/share/keyrings/default
+        content: "login\n"
+        owner: zero
+        group: zero
+        mode: "0600"
+        force: false
 
     - name: Configure GDM for auto-login
       ansible.builtin.copy:

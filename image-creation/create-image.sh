@@ -122,6 +122,8 @@ if [ -n "$PLANT" ]; then
   install -m 0600 "$DOT1X_SECRETS_DIR/dot1x-enroll.conf" "$ROOT_MOUNT_PATH/etc/dot1x-enroll.conf"
   install -m 0755 "$DOT1X_SECRETS_DIR/scepclient" "$ROOT_MOUNT_PATH/usr/local/bin/scepclient"
   install -m 0755 "$DOT1X_ENROLL_DIR/dot1x-enroll.sh" "$DOT1X_ENROLL_DIR/dot1x-enroll-monitor.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
+  install -d "$ROOT_MOUNT_PATH/usr/local/lib/dot1x-enroll"
+  install -m 0644 "$DOT1X_ENROLL_DIR"/lib/*.sh "$ROOT_MOUNT_PATH/usr/local/lib/dot1x-enroll/"
   install -m 0644 "$DOT1X_ENROLL_DIR/dot1x-enroll.service" "$DOT1X_ENROLL_DIR/dot1x-supplicant@.service" "$ROOT_MOUNT_PATH/etc/systemd/system/"
   install -D -m 0600 "$DOT1X_ENROLL_DIR/90-networkmanager.yaml" "$ROOT_MOUNT_PATH/etc/netplan/90-networkmanager.yaml"
   # An empty file here overrides the packaged one that leaves Ethernet unmanaged outside Ubuntu Desktop
@@ -130,7 +132,6 @@ if [ -n "$PLANT" ]; then
   # Google Chrome on the captive portal instead of GNOME's portal helper
   install -m 0755 "$DOT1X_ENROLL_DIR/captive-portal-browser.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
   install -D -m 0755 "$DOT1X_ENROLL_DIR/90-captive-portal" "$ROOT_MOUNT_PATH/etc/NetworkManager/dispatcher.d/90-captive-portal"
-  install -D -m 0644 "$DOT1X_ENROLL_DIR/captive-portal-browser.desktop" "$ROOT_MOUNT_PATH/etc/xdg/autostart/captive-portal-browser.desktop"
   # No reporting, sign-in, prompts or DNS-over-HTTPS: on the registration VLAN they only add requests to the portal
   install -D -m 0644 "$DOT1X_ENROLL_DIR/chrome-policies.json" "$ROOT_MOUNT_PATH/etc/opt/chrome/policies/managed/zero-client.json"
 fi

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# NetworkManager dispatcher: opens the captive portal browser for the desktop user when NetworkManager detects a portal,
-# and once the network is fully open closes it and runs the Ansible units that failed while the device was still behind the portal.
+# NetworkManager dispatcher: when NetworkManager detects a portal it wakes dot1x-enroll, which alone opens the portal
+# browser (only once 802.1X runs, so the right login page shows); once the network is fully open it closes the window
+# and runs the Ansible units that failed while the device was still behind the portal.
 
 DESKTOP_USER=zero
-BROWSER_UNIT=captive-portal-browser
+source /usr/local/lib/dot1x-enroll/portal.sh
 
 case "$2" in
   up|dhcp4-change)
@@ -14,11 +15,11 @@ case "$2" in
   connectivity-change)
     case "$CONNECTIVITY_STATE" in
       PORTAL)
-        systemctl --user --machine="$DESKTOP_USER@" is-active --quiet "$BROWSER_UNIT" && exit 0
-        systemd-run --user --machine="$DESKTOP_USER@" --unit="$BROWSER_UNIT" --collect /usr/local/bin/captive-portal-browser.sh
+        # Only the monitor gets the signal, never a dot1x-enroll run in progress
+        systemctl kill --kill-whom=main --signal=USR1 dot1x-enroll.service 2>/dev/null
         ;;
       FULL)
-        systemctl --user --machine="$DESKTOP_USER@" stop "$BROWSER_UNIT" 2>/dev/null
+        close_portal_browser
         # These only run on the working network, so at boot behind the portal they fail once and are started here
         for ansible_unit in ansible-first-boot.service ansible-boot.service; do
           if systemctl is-enabled --quiet "$ansible_unit" && systemctl is-failed --quiet "$ansible_unit"; then
