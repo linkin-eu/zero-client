@@ -1,33 +1,36 @@
 #!/usr/bin/env bash
-# NetworkManager dispatcher: when NetworkManager detects a portal it wakes dot1x-enroll, which alone opens the portal
-# browser (only once 802.1X runs, so the right login page shows); once the network is fully open it closes the window
-# and runs the Ansible units that failed while the device was still behind the portal.
+# NetworkManager dispatcher: on every change of the wired connection it wakes dot1x-enroll, which alone decides about
+# 802.1X, the address and the portal window. Once the network is fully open it also closes the window and runs the
+# Ansible units that failed while the device was still behind the portal.
 
 DESKTOP_USER=zero
 source /usr/local/lib/dot1x-enroll/portal.sh
 
+# Signals the controller process itself: "systemctl kill" would add a journal line on every DHCP renewal
+wake_dot1x_enroll() {
+  local controller_pid
+  controller_pid=$(systemctl show dot1x-enroll.service -p MainPID --value 2>/dev/null)
+  [ -n "$controller_pid" ] && [ "$controller_pid" != 0 ] && kill -USR1 "$controller_pid" 2>/dev/null
+}
+
 case "$2" in
-  up|dhcp4-change)
-    # The switch moves the port to the working VLAN without a link change, so NetworkManager would keep reporting
-    # the portal until its next periodic check; checking now closes the portal window as soon as the address changes
+  up|down|dhcp4-change)
+    # The switch moves the port to another VLAN without a link change, so NetworkManager would keep its last
+    # connectivity result until the next periodic check; checking now reports the new VLAN at once
     nmcli networking connectivity check >/dev/null 2>&1
+    wake_dot1x_enroll
     ;;
   connectivity-change)
-    case "$CONNECTIVITY_STATE" in
-      PORTAL)
-        # Only the monitor gets the signal, never a dot1x-enroll run in progress
-        systemctl kill --kill-whom=main --signal=USR1 dot1x-enroll.service 2>/dev/null
-        ;;
-      FULL)
-        close_portal_browser
-        # These only run on the working network, so at boot behind the portal they fail once and are started here
-        for ansible_unit in ansible-first-boot.service ansible-boot.service; do
-          if systemctl is-enabled --quiet "$ansible_unit" && systemctl is-failed --quiet "$ansible_unit"; then
-            systemctl start --no-block "$ansible_unit"
-          fi
-        done
-        ;;
-    esac
+    wake_dot1x_enroll
+    if [ "$CONNECTIVITY_STATE" = FULL ]; then
+      close_portal_window
+      # These only run on the working network, so at boot behind the portal they fail once and are started here
+      for ansible_unit in ansible-first-boot.service ansible-boot.service; do
+        if systemctl is-enabled --quiet "$ansible_unit" && systemctl is-failed --quiet "$ansible_unit"; then
+          systemctl start --no-block "$ansible_unit"
+        fi
+      done
+    fi
     ;;
 esac
 exit 0

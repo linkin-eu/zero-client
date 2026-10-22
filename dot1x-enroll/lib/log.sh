@@ -1,37 +1,58 @@
-# Journal output of dot1x-enroll. A failure retried every few seconds would write the same lines on every run,
-# so a run's messages reach the journal only when they differ from the previous run's, or again after
-# REPEAT_LOG_AFTER while the problem lasts; the skipped repeats are counted, so a loop still shows.
-# Each line keeps the time it happened at, as it is printed at the end of the run.
+# Journal output of dot1x-enroll. The controller logs each state change with the facts behind it; a failing
+# action is logged once per state, so a retry every few seconds does not flood the journal (or wear the stick),
+# and again after REPEAT_LOG_AFTER while it keeps failing.
 
-LAST_RUN_MESSAGES=/run/dot1x-enroll-last-run
-SKIPPED_REPEATS=/run/dot1x-enroll-skipped-repeats
 REPEAT_LOG_AFTER=600
-run_messages=""
-run_log=""
+last_failure=""
+last_failure_at=0
 
-# Used by the other helpers too, which is why it lives in the first file loaded
+log() {
+  echo "[DOT1X-ENROLL] $*"
+}
+
+log_failure() {
+  local now
+  now=$(date +%s)
+  if [ "$*" != "$last_failure" ] || [ $((now - last_failure_at)) -ge $REPEAT_LOG_AFTER ]; then
+    log "FAIL: $*"
+    last_failure="$*"
+    last_failure_at=$now
+  fi
+}
+
+# A new state starts with a clean slate, so its first failure is always logged
+forget_failures() {
+  last_failure=""
+  last_failure_at=0
+}
+
 seconds_since_modified() {
   echo $(( $(date +%s) - $(date -r "$1" +%s) ))
 }
 
-log() {
-  run_messages+="$*"$'\n'
-  run_log+="[DOT1X-ENROLL] $(date +%T) $*"$'\n'
+# Every external command runs with a time limit, so none can hold the controller; the systemd watchdog
+# restarts it should anything else stall
+bounded() {
+  local seconds=$1
+  shift
+  timeout --kill-after=3 "$seconds" "$@"
 }
 
-flush_log() {
-  local previous="" skipped=0
-  [ -f "$LAST_RUN_MESSAGES" ] && previous=$(cat "$LAST_RUN_MESSAGES")
-  [ -f "$SKIPPED_REPEATS" ] && skipped=$(cat "$SKIPPED_REPEATS")
-  if [ "$(printf '%s' "$run_messages")" != "$previous" ] \
-    || { [ -n "$run_messages" ] && [ "$(seconds_since_modified "$LAST_RUN_MESSAGES")" -ge $REPEAT_LOG_AFTER ]; }; then
-    if [ "$skipped" -gt 0 ]; then
-      echo "[DOT1X-ENROLL] $(date +%T) The previous messages repeated $skipped more times"
-    fi
-    printf '%s' "$run_log"
-    printf '%s' "$run_messages" > "$LAST_RUN_MESSAGES"
-    echo 0 > "$SKIPPED_REPEATS"
-  elif [ -n "$run_messages" ]; then
-    echo $((skipped + 1)) > "$SKIPPED_REPEATS"
+# What the controller is doing now, so a run stopped by the watchdog shows where it stood.
+# A dry run also reports every step that took SLOW_STEP seconds or more, to find what holds a check up.
+SLOW_STEP=3
+step_name=""
+step_started_at=0
+
+step() {
+  local now
+  now=$(date +%s)
+  if [ "$DRY_RUN" = 1 ] && [ -n "$step_name" ] && [ "$step_name" != sleeping ] \
+    && [ $((now - step_started_at)) -ge $SLOW_STEP ]; then
+    log "slow: '$step_name' took $((now - step_started_at))s"
   fi
+  step_name="$*"
+  step_started_at=$now
+  echo "$*" > "$STEP_FILE"
 }
+

@@ -121,7 +121,7 @@ echo "PLAYBOOK_BRANCH=$PLAYBOOK_BRANCH" > "$ROOT_MOUNT_PATH/etc/default/zero-cli
 if [ -n "$PLANT" ]; then
   install -m 0600 "$DOT1X_SECRETS_DIR/dot1x-enroll.conf" "$ROOT_MOUNT_PATH/etc/dot1x-enroll.conf"
   install -m 0755 "$DOT1X_SECRETS_DIR/scepclient" "$ROOT_MOUNT_PATH/usr/local/bin/scepclient"
-  install -m 0755 "$DOT1X_ENROLL_DIR/dot1x-enroll.sh" "$DOT1X_ENROLL_DIR/dot1x-enroll-monitor.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
+  install -m 0755 "$DOT1X_ENROLL_DIR/dot1x-enroll.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
   install -d "$ROOT_MOUNT_PATH/usr/local/lib/dot1x-enroll"
   install -m 0644 "$DOT1X_ENROLL_DIR"/lib/*.sh "$ROOT_MOUNT_PATH/usr/local/lib/dot1x-enroll/"
   install -m 0644 "$DOT1X_ENROLL_DIR/dot1x-enroll.service" "$DOT1X_ENROLL_DIR/dot1x-supplicant@.service" "$ROOT_MOUNT_PATH/etc/systemd/system/"

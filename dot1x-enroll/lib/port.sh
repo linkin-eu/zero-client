@@ -4,86 +4,55 @@ cable_plugged() {
   [ "$(cat "/sys/class/net/$INTERFACE/carrier" 2>/dev/null)" = 1 ]
 }
 
-authorized() {
-  wpa_cli -i "$INTERFACE" status 2>/dev/null | grep -qx "suppPortStatus=Authorized"
+dot1x_status() {
+  bounded 5 wpa_cli -i "$INTERFACE" status 2>/dev/null
 }
 
-# Without 802.1X PacketFence serves the MAB login page, so the portal window must not stay open or open again:
-# a window kept across the VLAN change would reload onto that page, and later onto a dead one
-forget_authorization() {
-  rm -f "$AUTHORIZED_MARKER"
-  close_portal_browser
-}
-
-wait_for_authorization() {
-  local elapsed=0
-  while [ $elapsed -lt $CONNECT_TIMEOUT ]; do
-    authorized && return 0
-    sleep 5
-    elapsed=$((elapsed + 5))
-  done
-  return 1
-}
-
-wait_for_address() {
-  local elapsed=0
-  while [ $elapsed -lt $CONNECT_TIMEOUT ]; do
-    ip -4 -o address show dev "$INTERFACE" scope global | grep -q inet && return 0
-    sleep 5
-    elapsed=$((elapsed + 5))
-  done
-  return 1
-}
-
-switch_failed_recently() {
-  [ -f "$SWITCH_REFUSED" ] && [ "$(seconds_since_modified "$SWITCH_REFUSED")" -lt $SWITCH_RETRY_AFTER ]
-}
-
-# The switch moves the port to another VLAN when 802.1X starts or stops, so the address must follow.
-# Reactivating the connection also reruns the connectivity check that detects the captive portal.
-# Without a link NetworkManager cannot activate the netplan connection and creates a new one instead, which it
-# writes back into /etc/netplan; Ansible then restores the file and restarts NetworkManager. Once the link is up
-# NetworkManager reconnects by itself, so the renewal is skipped while there is none.
-# When no DHCP server answers, nmcli would wait the whole DHCP timeout; the activation goes on in NetworkManager
-# after nmcli returns, so a short wait keeps the run responsive.
-renew_address() {
-  cable_plugged || return 0
-  nmcli --wait 15 device connect "$INTERFACE" >/dev/null 2>&1
-}
-
-wait_for_carrier() {
-  local elapsed=0
-  while [ $elapsed -lt $CARRIER_TIMEOUT ]; do
-    cable_plugged && return 0
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-  return 1
-}
-
-# PacketFence moves the port to another VLAN without a link change (CoA when a registration expires or is removed),
-# so the address from the old VLAN stays configured and reaches nothing. The address is current while the gateway or
-# the DHCP server that leased it answers ARP: the working VLAN has a gateway, while the onboarding VLAN has no router
-# but PacketFence, its DHCP server, sits on it. ARP, unlike ping, is not filtered.
-address_is_stale() {
-  local gateway dhcp_server neighbour
-  gateway=$(ip -4 route show default dev "$INTERFACE" | awk '{print $3; exit}')
-  dhcp_server=$(nmcli -t -f DHCP4 device show "$INTERFACE" 2>/dev/null \
+# none, valid or stale. PacketFence moves the port to another VLAN without a link change (CoA when a registration
+# expires or is removed), so an address from the old VLAN can stay configured and reach nothing.
+# Reaching the portal or the internet proves the address works on the current VLAN. Only without that (an
+# internet outage, or the old VLAN's address) ARP decides: the address is valid while the gateway or the DHCP
+# server that leased it answers. ARP alone is not enough: on the onboarding VLAN neither has been seen to answer.
+address_state() {
+  local network=$1 gateway dhcp_server neighbour
+  if ! bounded 5 ip -4 -o address show dev "$INTERFACE" scope global | grep -q inet; then
+    echo none
+    return
+  fi
+  if [ "$network" = full ] || [ "$network" = portal ]; then
+    echo valid
+    return
+  fi
+  gateway=$(bounded 5 ip -4 route show default dev "$INTERFACE" | awk '{print $3; exit}')
+  dhcp_server=$(bounded 10 nmcli -t -f DHCP4 device show "$INTERFACE" 2>/dev/null \
     | sed -n 's/^DHCP4\.OPTION\[[0-9]*\]:dhcp_server_identifier = //p')
   for neighbour in $gateway $dhcp_server; do
-    arping -c 2 -w 3 -I "$INTERFACE" "$neighbour" >/dev/null 2>&1 && return 1
+    if bounded 5 arping -c 2 -w 3 -I "$INTERFACE" "$neighbour" >/dev/null 2>&1; then
+      echo valid
+      return
+    fi
   done
-  return 0
+  echo stale
 }
 
-# A renewal briefly drops the connection and triggers a new connectivity check, which can wake the next run at once,
-# so stale-address renewals are spaced out and can never turn into a loop. Fails when it is too soon to renew again.
-renew_stale_address() {
-  if [ -f "$STALE_RENEWED" ] && [ "$(seconds_since_modified "$STALE_RENEWED")" -lt $RENEW_STALE_AFTER ]; then
-    return 1
+# Reactivating the connection makes NetworkManager ask DHCP again and rerun the connectivity check.
+# Without a link NetworkManager cannot activate the netplan connection and creates a new one instead, which it
+# writes back into /etc/netplan, so nothing is done then: NetworkManager reconnects by itself once the link is up.
+# When no DHCP server answers nmcli would wait the whole DHCP timeout; the activation goes on after it returns.
+renew_address() {
+  cable_plugged || return 0
+  bounded 20 nmcli --wait 15 device connect "$INTERFACE" >/dev/null 2>&1
+}
+
+# A renewal drops the connection for a moment, so renewals are spaced out and can never turn into a loop.
+# A link bounce counts as one, since NetworkManager then asks DHCP on its own.
+renew_address_if_due() {
+  [ "$fact_address" = valid ] && return 0
+  if [ -f "$ADDRESS_RENEWED" ] && [ "$(seconds_since_modified "$ADDRESS_RENEWED")" -lt $RENEW_ADDRESS_AFTER ]; then
+    return 0
   fi
-  touch "$STALE_RENEWED"
-  log "Neither the gateway nor the DHCP server on $INTERFACE answers, renewing the address"
+  touch "$ADDRESS_RENEWED"
+  log "Renewing the $fact_address address on $INTERFACE"
   renew_address
 }
 
@@ -106,28 +75,36 @@ network={
 EOF
 }
 
-# Stopping wpa_supplicant logs the port off; the portal must not open until 802.1X is back,
-# since on the onboarding VLAN PacketFence serves the MAB profile's login page.
-# The switch does not move the port on its own (no CoA from PacketFence), so the link is
-# dropped to make it authenticate the port again from scratch, this time through MAB.
-leave_eap_tls() {
-  systemctl stop "$WPA_SERVICE"
-  forget_authorization
-  ip link set "$INTERFACE" down
-  sleep 3
-  ip link set "$INTERFACE" up
-  wait_for_carrier
-  renew_address
+start_dot1x() {
+  log "Starting 802.1X on $INTERFACE with certificate $(certificate_serial)"
+  write_eap_config
+  rm -f "$UNAUTHORIZED_SINCE"
+  bounded 30 systemctl restart "$WPA_SERVICE"
 }
 
-fall_back_to_mab() {
-  log "EAP-TLS was not authorized within ${CONNECT_TIMEOUT}s, falling back to the onboarding VLAN"
-  mv "$EAP_CONFIG" "$EAP_CONFIG.failed"
-  # Back off only when the cable was plugged in and the switch still did not let us in
-  if cable_plugged; then
-    touch "$SWITCH_REFUSED"
-  else
-    rm -f "$SWITCH_REFUSED"
-  fi
-  leave_eap_tls
+# Stopping wpa_supplicant logs the port off. Without a link change the switch would keep the port as it was, so the
+# link is dropped for a moment: the switch then authenticates the port from scratch, this time through MAB, and
+# NetworkManager asks DHCP again by itself.
+leave_dot1x() {
+  bounded 30 systemctl stop "$WPA_SERVICE"
+  rm -f "$AUTHORIZED_MARKER"
+  close_portal_window
+  bounded 5 ip link set "$INTERFACE" down
+  sleep 3
+  bounded 5 ip link set "$INTERFACE" up
+  touch "$ADDRESS_RENEWED"
+}
+
+# A refusal while OCSP still reports the certificate good is a policy decision: the same certificate is
+# tried again after SWITCH_RETRY_AFTER, and only an invalid, expired or revoked one is replaced
+leave_refused() {
+  log "802.1X refused, falling back to the onboarding VLAN"
+  # A pulled cable is not a refusal, so it does not delay the next attempt
+  cable_plugged && touch "$SWITCH_REFUSED"
+  leave_dot1x
+}
+
+# The check NetworkManager ran right after a VLAN change may have come before the internet was reachable
+recheck_connectivity() {
+  bounded 20 nmcli networking connectivity check >/dev/null 2>&1
 }

@@ -4,9 +4,12 @@ After=systemd-networkd.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/dot1x-enroll-monitor.sh
+ExecStart=/usr/local/bin/dot1x-enroll.sh
 Restart=always
-RestartSec=30
+RestartSec=5
+# The controller reports on every check (60 s at most plus a bounded action); silence means it stalled
+WatchdogSec=180
+NotifyAccess=all
 
 [Install]
 WantedBy=multi-user.target
