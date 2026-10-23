@@ -15,15 +15,12 @@ OCSP_URL="https://$OCSP_HOST/pki/ocsp"
 CONNECTIVITY_URL=http://connectivity-check.ubuntu.com/
 PROBE_TIMEOUT=3
 
-DOT1X_DIR=${DOT1X_DIR:-/var/lib/dot1x-enroll}
+DOT1X_DIR=/var/lib/dot1x-enroll
 EAP_CONFIG=$DOT1X_DIR/wpa_supplicant.conf
 # Last refusal of 802.1X with the cable plugged in; kept across reboots
 SWITCH_REFUSED=$DOT1X_DIR/switch-refused
 
-# DRY_RUN=1 gathers the facts and decides as usual, but only logs the actions: a shadow run beside another controller
-# (with its own RUN_DIR) shows what this one would do on a real device without touching the port
-DRY_RUN=${DRY_RUN:-0}
-RUN_DIR=${RUN_DIR:-/run/dot1x-enroll}
+RUN_DIR=/run/dot1x-enroll
 UNAUTHORIZED_SINCE=$RUN_DIR/unauthorized-since
 ADDRESS_RENEWED=$RUN_DIR/address-renewed
 OCSP_CACHE=$RUN_DIR/ocsp
@@ -53,7 +50,7 @@ WPA_SERVICE=dot1x-supplicant@$INTERFACE
 # One identity per device for the certificate and PacketFence; the hostname is shared by all thin clients
 COMMON_NAME="zero-$PLANT-$(tr -d : < "/sys/class/net/$INTERFACE/address" 2>/dev/null)"
 
-LIB_DIR=${LIB_DIR:-/usr/local/lib/dot1x-enroll}
+LIB_DIR=/usr/local/lib/dot1x-enroll
 source "$LIB_DIR/log.sh"
 source "$LIB_DIR/facts.sh"
 source "$LIB_DIR/decide.sh"
@@ -86,7 +83,7 @@ state_since=$(date +%s)
 while true; do
   wake_requested=0
   # Tells the systemd watchdog the loop still turns; a check that stalls is restarted (WatchdogSec)
-  [ "$DRY_RUN" = 1 ] || bounded 5 systemd-notify WATCHDOG=1
+  bounded 5 systemd-notify WATCHDOG=1
 
   gather_facts
   fact_previous_state=$current_state
@@ -100,23 +97,16 @@ while true; do
     forget_failures
   fi
 
-  if [ "$DRY_RUN" = 1 ]; then
-    if [ "$decision_state $decision_action $decision_window" != "$last_dry_decision" ]; then
-      log "would: action=$decision_action window=$decision_window"
-      last_dry_decision="$decision_state $decision_action $decision_window"
-    fi
+  # captive-portal-browser.sh opens nothing without it, as a second guard against the MAB login page
+  if [ "$fact_mode" = dot1x ] && [ "$fact_auth" = authorized ]; then
+    touch "$AUTHORIZED_MARKER"
   else
-    # captive-portal-browser.sh opens nothing without it, as a second guard against the MAB login page
-    if [ "$fact_mode" = dot1x ] && [ "$fact_auth" = authorized ]; then
-      touch "$AUTHORIZED_MARKER"
-    else
-      rm -f "$AUTHORIZED_MARKER"
-    fi
-    step "action: $decision_action"
-    [ "$decision_action" != none ] && "$decision_action"
-    step "window: $decision_window"
-    apply_window_decision "$decision_window"
+    rm -f "$AUTHORIZED_MARKER"
   fi
+  step "action: $decision_action"
+  [ "$decision_action" != none ] && "$decision_action"
+  step "window: $decision_window"
+  apply_window_decision "$decision_window"
   step sleeping
 
   interval=$(next_interval "$current_state" $(( $(date +%s) - state_since )))

@@ -38,21 +38,8 @@ bounded() {
   timeout --kill-after=3 "$seconds" "$@"
 }
 
-# What the controller is doing now, so a run stopped by the watchdog shows where it stood.
-# A dry run also reports every step that took SLOW_STEP seconds or more, to find what holds a check up.
-SLOW_STEP=3
-step_name=""
-step_started_at=0
-
+# What the controller is doing now, so a run stopped by the watchdog shows where it stood
 step() {
-  local now
-  now=$(date +%s)
-  if [ "$DRY_RUN" = 1 ] && [ -n "$step_name" ] && [ "$step_name" != sleeping ] \
-    && [ $((now - step_started_at)) -ge $SLOW_STEP ]; then
-    log "slow: '$step_name' took $((now - step_started_at))s"
-  fi
-  step_name="$*"
-  step_started_at=$now
   echo "$*" > "$STEP_FILE"
 }
 
