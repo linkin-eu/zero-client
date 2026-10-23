@@ -7,9 +7,9 @@ PORTAL_PROBE_URL="http://connectivity-check.ubuntu.com/"
 # A separate profile, so the portal window never mixes with the user's own browsing
 PROFILE_DIR="$XDG_RUNTIME_DIR/captive-portal-profile"
 
-# Before 802.1X PacketFence serves the MAB profile's login page; dot1x-enroll opens the portal once the port is authorized
+# Before 802.1X PacketFence serves the MAB profile's login page; dot1x-enroll opens the portal once the port is
+# authorized and its own probe sees the portal (NetworkManager's check can lag behind it)
 [ -f /run/dot1x-enroll-authorized ] || exit 0
-[ "$(nmcli -t -f CONNECTIVITY general)" = portal ] || exit 0
 
 mkdir -p "$PROFILE_DIR"
 

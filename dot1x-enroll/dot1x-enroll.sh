@@ -11,6 +11,9 @@ source /etc/dot1x-enroll.conf
 SCEP_URL="http://$SCEP_HOST/scep/$SCEP_TEMPLATE"
 # The OCSP responder answers on both VLANs, unlike the SCEP host
 OCSP_URL="https://$OCSP_HOST/pki/ocsp"
+# Answers 204 on the working network; on the onboarding VLAN PacketFence answers with its portal instead
+CONNECTIVITY_URL=http://connectivity-check.ubuntu.com/
+PROBE_TIMEOUT=3
 
 DOT1X_DIR=${DOT1X_DIR:-/var/lib/dot1x-enroll}
 EAP_CONFIG=$DOT1X_DIR/wpa_supplicant.conf

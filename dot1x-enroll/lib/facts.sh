@@ -38,15 +38,10 @@ gather_facts() {
     port_open=yes
   fi
 
-  # A fresh check, not NetworkManager's last result, which can be a minute old after a VLAN change;
-  # through a closed port it could only time out, so the last result does then
+  # Through a closed port every probe could only time out
   step "facts: network"
-  if [ "$port_open" = yes ]; then
-    fact_network=$(bounded 20 nmcli networking connectivity check 2>/dev/null)
-  else
-    fact_network=$(bounded 10 nmcli -t -f CONNECTIVITY general 2>/dev/null)
-  fi
-  [ -n "$fact_network" ] || fact_network=unknown
+  fact_network=none
+  [ "$port_open" = yes ] && fact_network=$(network_state)
 
   step "facts: address"
   fact_address=unknown

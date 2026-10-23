@@ -8,31 +8,44 @@ dot1x_status() {
   bounded 5 wpa_cli -i "$INTERFACE" status 2>/dev/null
 }
 
+# full, portal or none, from the same probe NetworkManager uses, but with a short time limit: through an address
+# from the old VLAN NetworkManager's own check only gives up after about 20 s. One failed request is retried,
+# since a single lost request is common and would otherwise read as an outage.
+network_state() {
+  local status attempt
+  for attempt in 1 2; do
+    status=$(bounded 5 curl -s -o /dev/null -m "$PROBE_TIMEOUT" -w "%{http_code}" "$CONNECTIVITY_URL" 2>/dev/null)
+    case "$status" in
+      204) echo full; return ;;
+      000|"") sleep 1 ;;
+      # PacketFence answers any page on the onboarding VLAN with its portal (a redirect or the page itself)
+      *) echo portal; return ;;
+    esac
+  done
+  echo none
+}
+
+# Whether PacketFence answers. It does on both VLANs, unlike the internet (working VLAN only) and ARP to the
+# gateway (silent on the onboarding VLAN), so an answer proves the address works on the VLAN the port is on.
+packetfence_reachable() {
+  local status
+  status=$(bounded 5 curl -sk -o /dev/null -m "$PROBE_TIMEOUT" -w "%{http_code}" "$OCSP_URL" 2>/dev/null)
+  [ -n "$status" ] && [ "$status" != 000 ]
+}
+
 # none, valid or stale. PacketFence moves the port to another VLAN without a link change (CoA when a registration
-# expires or is removed), so an address from the old VLAN can stay configured and reach nothing.
-# Reaching the portal or the internet proves the address works on the current VLAN. Only without that (an
-# internet outage, or the old VLAN's address) ARP decides: the address is valid while the gateway or the DHCP
-# server that leased it answers. ARP alone is not enough: on the onboarding VLAN neither has been seen to answer.
+# expires or is removed), so an address from the old VLAN can stay configured and reach nothing. Reaching the
+# portal or the internet proves the address works; without either (an internet outage, or the old VLAN's address)
+# PacketFence decides.
 address_state() {
-  local network=$1 gateway dhcp_server neighbour
+  local network=$1
   if ! bounded 5 ip -4 -o address show dev "$INTERFACE" scope global | grep -q inet; then
     echo none
-    return
-  fi
-  if [ "$network" = full ] || [ "$network" = portal ]; then
+  elif [ "$network" = full ] || [ "$network" = portal ] || packetfence_reachable; then
     echo valid
-    return
+  else
+    echo stale
   fi
-  gateway=$(bounded 5 ip -4 route show default dev "$INTERFACE" | awk '{print $3; exit}')
-  dhcp_server=$(bounded 10 nmcli -t -f DHCP4 device show "$INTERFACE" 2>/dev/null \
-    | sed -n 's/^DHCP4\.OPTION\[[0-9]*\]:dhcp_server_identifier = //p')
-  for neighbour in $gateway $dhcp_server; do
-    if bounded 5 arping -c 2 -w 3 -I "$INTERFACE" "$neighbour" >/dev/null 2>&1; then
-      echo valid
-      return
-    fi
-  done
-  echo stale
 }
 
 # Reactivating the connection makes NetworkManager ask DHCP again and rerun the connectivity check.

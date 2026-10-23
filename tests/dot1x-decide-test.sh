@@ -126,34 +126,45 @@ check "working VLAN without internet: recheck, no window" "NO_INTERNET recheck_c
 check "a revocation of an invalid certificate is ignored" "ENROLLING enroll_certificate closed" \
   mode=mab certificate=invalid revoked=yes network=portal
 
-echo "== Address check (lib/port.sh) with stand-ins for ip, nmcli and arping"
+echo "== Network and address probes (lib/port.sh) with stand-ins for ip and curl"
 source "$REPO_DIR/dot1x-enroll/lib/port.sh"
 INTERFACE=eno1
+PROBE_TIMEOUT=3
+CONNECTIVITY_URL=http://connectivity-check.ubuntu.com/
+OCSP_URL=https://packetfence.example/pki/ocsp
 # The stand-ins below are shell functions, which the real time limit (timeout) cannot run
 bounded() {
   shift
   "$@"
 }
-answering_neighbours=""
+sleep() { :; }
 has_address=yes
-gateway_address=""
-dhcp_server_address=""
 ip() {
   case "$*" in
     *"address show"*) [ "$has_address" = yes ] && echo "2: eno1    inet 10.0.0.5/24 scope global eno1" ;;
-    *"route show default"*) [ -n "$gateway_address" ] && echo "default via $gateway_address dev eno1" ;;
   esac
 }
-nmcli() {
-  [ -n "$dhcp_server_address" ] && echo "DHCP4.OPTION[3]:dhcp_server_identifier = $dhcp_server_address"
+# The internet probe answers from a list, one answer per request; curl runs in a subshell, so the position is
+# kept in a file
+probe_dir=$(mktemp -d)
+connectivity_answers() {
+  printf '%s\n' "$@" > "$probe_dir/answers"
+  echo 1 > "$probe_dir/next"
 }
-arping() {
-  local target=${*: -1}
-  case " $answering_neighbours " in *" $target "*) return 0 ;; *) return 1 ;; esac
+packetfence_answer=000
+curl() {
+  local next
+  case "$*" in
+    *"$CONNECTIVITY_URL"*)
+      next=$(cat "$probe_dir/next")
+      printf '%s' "$(sed -n "${next}p" "$probe_dir/answers" | grep . || echo 000)"
+      echo $((next + 1)) > "$probe_dir/next"
+      ;;
+    *"$OCSP_URL"*) printf '%s' "$packetfence_answer" ;;
+  esac
 }
-check_address() {
-  local name=$1 expected=$2 network=$3 actual
-  actual=$(address_state "$network")
+check_probe() {
+  local name=$1 expected=$2 actual=$3
   if [ "$actual" = "$expected" ]; then
     passed=$((passed + 1))
   else
@@ -161,21 +172,27 @@ check_address() {
     echo "FAIL $name: expected $expected, got $actual"
   fi
 }
-has_address=yes gateway_address=10.31.0.1 dhcp_server_address=10.31.0.10 answering_neighbours="10.31.0.1 10.31.0.10"
-check_address "working VLAN, internet reachable" valid full
-check_address "working VLAN, internet down, gateway answers" valid limited
-has_address=yes gateway_address=10.20.2.254 dhcp_server_address=10.20.2.1 answering_neighbours=""
-check_address "onboarding VLAN, ARP silent, portal reached (seen 22.10 14:43)" valid portal
-check_address "onboarding VLAN, ARP silent, no portal reached" stale limited
-has_address=yes gateway_address=10.20.2.254 dhcp_server_address=10.20.2.1 answering_neighbours="10.20.2.1"
-check_address "onboarding VLAN, PacketFence answers ARP" valid none
-has_address=yes gateway_address=10.31.0.1 dhcp_server_address=10.31.0.10 answering_neighbours=""
-check_address "port moved to another VLAN, old address reaches nothing" stale limited
-check_address "port moved, NetworkManager not yet able to tell" stale none
-has_address=yes gateway_address="" dhcp_server_address="" answering_neighbours=""
-check_address "address without gateway or DHCP server" stale none
+connectivity_answers 204
+check_probe "internet answers 204" full "$(network_state)"
+connectivity_answers 302
+check_probe "PacketFence redirects to its portal" portal "$(network_state)"
+connectivity_answers 200
+check_probe "PacketFence serves its portal page" portal "$(network_state)"
+connectivity_answers 000 204
+check_probe "one lost request, then 204 (the overnight NO_INTERNET blips)" full "$(network_state)"
+connectivity_answers 000 000
+check_probe "no answer twice" none "$(network_state)"
+
+has_address=yes packetfence_answer=400
+check_probe "internet reachable" valid "$(address_state full)"
+check_probe "onboarding VLAN, portal reached" valid "$(address_state portal)"
+check_probe "no internet, but PacketFence answers: the address works" valid "$(address_state none)"
+packetfence_answer=000
+check_probe "nothing answers: the address belongs to the old VLAN (22.10 09:29 took 48 s to see)" stale "$(address_state none)"
 has_address=no
-check_address "no address, even with an old portal result" none portal
+check_probe "no address" none "$(address_state portal)"
+rm -rf "$probe_dir"
+
 echo "== Check rhythm (next_interval)"
 FAST_INTERVAL=2
 ACTIVE_INTERVAL=10
@@ -236,7 +253,7 @@ source "$REPO_DIR/dot1x-enroll/lib/facts.sh"
 bounded() { shift; "$@"; }
 cable_plugged() { return 0; }
 systemctl() { return 0; }
-nmcli() { echo full; }
+network_state() { echo full; }
 address_state() { echo valid; }
 certificate_state() { echo valid; }
 revocation_state() { echo no; }
