@@ -114,6 +114,7 @@ mount --make-rslave "$ROOT_MOUNT_PATH"
 # Services and playbook
 cp "$SERVICES_DIR/"*.service "$ROOT_MOUNT_PATH/etc/systemd/system/" 2>/dev/null || true
 cp "$SERVICES_DIR/"*.timer   "$ROOT_MOUNT_PATH/etc/systemd/system/" 2>/dev/null || true
+install -m 0755 "$SERVICES_DIR/working-network-check.sh" "$SERVICES_DIR/reboot-after-first-boot.sh" "$ROOT_MOUNT_PATH/usr/local/bin/"
 cp "$ANSIBLE_DIR/zero.yml" "$ROOT_MOUNT_PATH/root/zero.yml"
 echo "PLAYBOOK_BRANCH=$PLAYBOOK_BRANCH" > "$ROOT_MOUNT_PATH/etc/default/zero-client"
 

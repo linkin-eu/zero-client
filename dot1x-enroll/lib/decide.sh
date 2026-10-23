@@ -42,6 +42,13 @@ decide() {
   fi
 
   if [ "$fact_mode" = dot1x ]; then
+    # Once the link is back, wpa_supplicant still reports its session from before and starts no 802.1X of its own, so
+    # the switch can authenticate the port through MAB, which PacketFence answers with the onboarding VLAN even for a
+    # registered device. A restart sends an EAPOL-Start, so the port always comes back through 802.1X.
+    if [ "$fact_previous_state" = NO_LINK ] && [ "$fact_certificate" = valid ]; then
+      set_decision STARTING_DOT1X start_dot1x closed "link back"
+      return
+    fi
     # While wpa_supplicant keeps trying, the switch keeps the port closed: no address can be renewed, and
     # only leaving 802.1X opens the onboarding VLAN with its OCSP and SCEP
     if [ "$fact_auth" = unauthorized ]; then

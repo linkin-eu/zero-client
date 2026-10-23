@@ -1,5 +1,4 @@
-# The captive portal window. Only dot1x-enroll opens it, from decision_window; the NetworkManager dispatcher
-# only closes it once the network is open.
+# The captive portal window, opened and closed only by dot1x-enroll, from decision_window.
 
 portal_window_open() {
   bounded 10 systemctl --user --machine="$DESKTOP_USER@" is-active --quiet captive-portal-browser

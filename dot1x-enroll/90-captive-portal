@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # NetworkManager dispatcher: on every change of the wired connection it wakes dot1x-enroll, which alone decides about
-# 802.1X, the address and the portal window. Once the network is fully open it also closes the window and runs the
-# Ansible units that failed while the device was still behind the portal.
-
-DESKTOP_USER=zero
-source /usr/local/lib/dot1x-enroll/portal.sh
+# 802.1X, the address and the portal window. Once the network is fully open it also runs the Ansible units that
+# failed while the device was still behind the portal.
 
 # Signals the controller process itself: "systemctl kill" would add a journal line on every DHCP renewal
 wake_dot1x_enroll() {
@@ -14,16 +11,20 @@ wake_dot1x_enroll() {
 }
 
 case "$2" in
-  up|down|dhcp4-change)
+  up|dhcp4-change)
     # The switch moves the port to another VLAN without a link change, so NetworkManager would keep its last
-    # connectivity result until the next periodic check; checking now reports the new VLAN at once
-    nmcli networking connectivity check >/dev/null 2>&1
+    # connectivity result until the next periodic check; checking now reports the new VLAN at once.
+    # In the background and bounded: through an address from the old VLAN the check is slow, and the dispatcher runs
+    # one script at a time, so it would hold up the connectivity-change event below.
+    timeout 30 nmcli networking connectivity check >/dev/null 2>&1 &
+    wake_dot1x_enroll
+    ;;
+  down)
     wake_dot1x_enroll
     ;;
   connectivity-change)
     wake_dot1x_enroll
     if [ "$CONNECTIVITY_STATE" = FULL ]; then
-      close_portal_window
       # These only run on the working network, so at boot behind the portal they fail once and are started here
       for ansible_unit in ansible-first-boot.service ansible-boot.service; do
         if systemctl is-enabled --quiet "$ansible_unit" && systemctl is-failed --quiet "$ansible_unit"; then

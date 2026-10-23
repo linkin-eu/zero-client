@@ -37,6 +37,11 @@ gather_facts() {
   if [ "$fact_link" = up ] && { [ "$fact_mode" = mab ] || [ "$fact_auth" = authorized ]; }; then
     port_open=yes
   fi
+  # Right after the link is back 802.1X starts again (lib/decide.sh) whatever the network says, and the authorization
+  # wpa_supplicant reports is still the one from before, so probing first would only delay the restart
+  if [ "$fact_mode" = dot1x ] && [ "$fact_previous_state" = NO_LINK ]; then
+    port_open=no
+  fi
 
   # Through a closed port every probe could only time out
   step "facts: network"

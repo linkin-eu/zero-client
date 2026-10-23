@@ -9,8 +9,8 @@ Type=oneshot
 Environment="ANSIBLE_LOG_PATH=/home/zero/.config/linkin/ansible-cron.log"
 # The branch the playbook is pulled from, set when the image is built
 EnvironmentFile=/etc/default/zero-client
-# Skips this run, without failing, while the device is not on the working network
-ExecCondition=/bin/sh -c 'wget -q --tries=1 --max-redirect=0 --timeout=10 -S -O /dev/null http://connectivity-check.ubuntu.com/ 2>&1 | grep -q " 204 "'
+# Skips this run, without failing, while an 802.1X device is not on the working network
+ExecCondition=/usr/local/bin/working-network-check.sh
 ExecStartPre=/usr/bin/wget -q https://raw.githubusercontent.com/techno-link/zero-client/refs/heads/${PLAYBOOK_BRANCH}/ansible/zero.yml -O /root/zero.yml
 ExecStart=/usr/bin/ansible-playbook /root/zero.yml -v
 

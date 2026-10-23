@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Opens Google Chrome on the captive portal for the desktop user, in place of GNOME's portal helper, which Ubuntu no longer ships.
-# Runs as the desktop user, started only by dot1x-enroll once the port is authorized and NetworkManager detects the portal.
+# Runs as the desktop user, started only by dot1x-enroll once the port is authorized and its probe sees the portal.
 
 # Any plain HTTP URL works: PacketFence redirects it to the portal
 PORTAL_PROBE_URL="http://connectivity-check.ubuntu.com/"

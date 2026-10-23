@@ -119,7 +119,17 @@ echo "== Link down, sleep and the MAB-only cases"
 check "cable pulled while working" "NO_LINK none closed" link=down address=unknown
 check "cable pulled at the portal" "NO_LINK none closed" link=down network=portal previous_state=PORTAL
 check "no link on MAB without a certificate" "NO_LINK none closed" link=down mode=mab certificate=missing
-check "woken up, still authorized" "WORKING none closed" previous_state=NO_LINK
+
+echo "== Link back: 802.1X starts again, since wpa_supplicant would not and the switch could fall back to MAB"
+check "cable back, wpa_supplicant still reports its old session (23.10 13:53 stuck on MAB)" \
+  "STARTING_DOT1X start_dot1x closed" previous_state=NO_LINK network=portal
+check "woken up, still reported authorized" "STARTING_DOT1X start_dot1x closed" previous_state=NO_LINK
+check "cable back after long: no refusal from the time it was out" "STARTING_DOT1X start_dot1x closed" \
+  auth=unauthorized unauthorized_for=300 address=unknown previous_state=NO_LINK
+check "a revoked certificate is still dropped first" "REVOKED drop_revoked_certificate closed" \
+  revoked=yes previous_state=NO_LINK
+check "after the restart: the usual wait for 802.1X" "CONNECTING none closed" \
+  auth=unauthorized unauthorized_for=2 address=unknown previous_state=STARTING_DOT1X
 check "working VLAN through MAB without a certificate: SCEP unreachable, keep trying" \
   "ENROLLING enroll_certificate closed" mode=mab certificate=missing network=full
 check "working VLAN without internet: recheck, no window" "NO_INTERNET recheck_connectivity closed" network=limited
@@ -275,6 +285,23 @@ wpa_status=$'Supplicant PAE state=HELD\nsuppPortStatus=Authorized\nEAP state=FAI
 check_auth "rejected, still reported authorized (22.10 15:49 renewed through a closed port)" "unauthorized yes"
 wpa_status=$'Supplicant PAE state=CONNECTING\nsuppPortStatus=Unauthorized\nEAP state=IDLE'
 check_auth "still trying" "unauthorized no"
+
+echo "== Right after the link is back the network is not probed: 802.1X starts again at once"
+check_probed() {
+  local name=$1 expected=$2
+  gather_facts
+  if [ "$fact_network" = "$expected" ]; then
+    passed=$((passed + 1))
+  else
+    failed=$((failed + 1))
+    echo "FAIL $name: expected network '$expected', got '$fact_network'"
+  fi
+}
+wpa_status=$'Supplicant PAE state=AUTHENTICATED\nsuppPortStatus=Authorized\nEAP state=SUCCESS'
+fact_previous_state=NO_LINK
+check_probed "link back, old authorization still reported: no probe (23.10 14:03 lost 10 s)" none
+fact_previous_state=WORKING
+check_probed "working: the network is probed" full
 rm -rf "$fact_test_dir"
 
 echo

@@ -203,7 +203,7 @@ Images built with a plant (`sudo ./create-image.sh <plant>`) authenticate the wi
 
 1. Boot on the PacketFence onboarding VLAN (MAC authentication fallback on the switch port)
 2. Request a certificate over SCEP from PacketFence (CN `zero-<plant>-<ethernet mac>`, CA pinned by fingerprint)
-3. Start 802.1X EAP-TLS on the port and renew DHCP; fall back to the onboarding VLAN when it is not authorized, re-enroll when the certificate is invalid, refused or revoked (OCSP)
+3. Start 802.1X EAP-TLS on the port and renew DHCP; fall back to the onboarding VLAN when it is not authorized and try the same certificate again after a pause; re-enroll when the certificate is missing, invalid or revoked (OCSP)
 
 Build-time settings come from the Yocto RPi SSM parameter `/yocto/<plant>/scep` (`eu-central-1`), read with the AWS credentials of the user running `sudo`.
 It must hold `KEY="value"` lines for `SCEP_HOST`, `SCEP_CHALLENGE`, `CA_FINGERPRINT`, `RADIUS_DOMAIN`, `OCSP_HOST`.

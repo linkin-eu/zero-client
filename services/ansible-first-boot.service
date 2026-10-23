@@ -7,12 +7,12 @@ After=network-online.target
 Type=oneshot
 Environment="ANSIBLE_LOG_PATH=/home/zero/.config/linkin/ansible-first-boot.log"
 # Only on the working network: a captive portal answers the connectivity check with something other than 204
-ExecStartPre=/bin/sh -c 'wget -q --tries=1 --max-redirect=0 --timeout=10 -S -O /dev/null http://connectivity-check.ubuntu.com/ 2>&1 | grep -q " 204 "'
+ExecStartPre=/usr/local/bin/working-network-check.sh
 ExecStart=/usr/bin/ansible-playbook /root/zero.yml -v
 ExecStartPost=/bin/systemctl disable ansible-first-boot.service
 ExecStartPost=/bin/systemctl enable ansible-boot.service
 ExecStartPost=/bin/systemctl enable ansible-cron.timer
-ExecStartPost=/sbin/reboot
+ExecStartPost=/usr/local/bin/reboot-after-first-boot.sh
 
 [Install]
 WantedBy=multi-user.target

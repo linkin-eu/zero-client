@@ -5,6 +5,14 @@
 # It keeps no memory of where it is in a flow, so it recovers from anything a later check can see.
 # docs/dot1x-enroll-design.md explains the states.
 
+# The dispatcher sends SIGUSR1 on a network change: the wait ends and the next check runs at once.
+# A signal that arrives during a check is kept, so one more check follows and sees the new state.
+# Set first, since an untrapped SIGUSR1 would end the process while it is still starting.
+wake_requested=0
+sleep_pid=""
+trap 'wake_requested=1; [ -n "$sleep_pid" ] && kill "$sleep_pid" 2>/dev/null' USR1
+trap 'exit 0' TERM INT
+
 source /etc/dot1x-enroll.conf
 
 # PacketFence serves SCEP per template over HTTP; the CA is pinned by CA_FINGERPRINT
@@ -70,13 +78,6 @@ if [ -f "$STEP_FILE" ] && [ "$(cat "$STEP_FILE")" != sleeping ]; then
   log "The previous controller stopped during: $(cat "$STEP_FILE")"
 fi
 
-# The dispatcher sends SIGUSR1 on a network change: the wait ends and the next check runs at once.
-# A signal that arrives during a check is kept, so one more check follows and sees the new state.
-wake_requested=0
-sleep_pid=""
-trap 'wake_requested=1; [ -n "$sleep_pid" ] && kill "$sleep_pid" 2>/dev/null' USR1
-trap 'exit 0' TERM INT
-
 current_state=""
 state_since=$(date +%s)
 
@@ -85,8 +86,8 @@ while true; do
   # Tells the systemd watchdog the loop still turns; a check that stalls is restarted (WatchdogSec)
   bounded 5 systemd-notify WATCHDOG=1
 
-  gather_facts
   fact_previous_state=$current_state
+  gather_facts
   step "deciding"
   decide
 

@@ -1,13 +1,13 @@
 [Unit]
 Description=Enroll a certificate over SCEP, authenticate the wired port with 802.1X EAP-TLS and keep it healthy
-After=systemd-networkd.service
+After=NetworkManager.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/dot1x-enroll.sh
 Restart=always
 RestartSec=5
-# The controller reports on every check (60 s at most plus a bounded action); silence means it stalled
+# The controller reports on every check (the longest interval plus a bounded action); silence means it stalled
 WatchdogSec=180
 NotifyAccess=all
 
