@@ -4,15 +4,6 @@ set -euox pipefail
 # Package prompts (console-setup, keyboard) would stop the unattended build; take their defaults
 export DEBIAN_FRONTEND=noninteractive
 
-# APT SOURCES: debootstrap only adds the release pocket, so without updates and security every package stays at release day
-cat >/etc/apt/sources.list <<EOF
-deb http://archive.ubuntu.com/ubuntu noble main universe
-deb http://archive.ubuntu.com/ubuntu noble-updates main universe
-deb http://security.ubuntu.com/ubuntu noble-security main universe
-EOF
-apt update
-apt upgrade -y
-
 # INSTALL PACKAGES
 apt install -y linux-image-generic software-properties-common
 add-apt-repository -y universe
